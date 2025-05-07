@@ -33,6 +33,19 @@ class AmbienteViewSet(viewsets.ModelViewSet):
             ])
         return response
 
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
+    def importar_ambientes_xlsx(self, request):
+        df = pd.read_excel(request.FILES['arquivo'], engine='openpyxl')
+        
+        for _, row in df.iterrows():
+            Ambiente.objects.create(
+                sig=row['sig'],
+                descricao=row['descricao'],
+                responsavel=row['responsavel']
+            )
+        
+        return Response({"mensagem": f"{len(df)} ambientes importados!"})
+
 class SensorViewSet(viewsets.ModelViewSet):
     queryset = Sensor.objects.all()
     serializer_class = SensorSerializer
@@ -64,6 +77,34 @@ class SensorViewSet(viewsets.ModelViewSet):
                 sensor.ambiente.sig
             ])
         return response
+
+# No SensorViewSet
+@action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
+def importar_sensores_xlsx(self, request):
+    df = pd.read_excel(request.FILES['arquivo'], engine='openpyxl')
+    
+    for _, row in df.iterrows():
+        # 1. Obter ou criar o Sensor
+        sensor, created = Sensor.objects.get_or_create(
+            mac_address=row['mac_address'],
+            defaults={
+                'tipo': row['sensor'],  # Ex: 'contador', 'luminosidade'
+                'status': row['status'],
+                'latitude': row['latitude'],
+                'longitude': row['longitude'],
+                # Ambiente (ajuste necessário - veja observação abaixo)
+                'ambiente': Ambiente.objects.get(sig='AMB_SIG_AQUI')  # Substituir por lógica real
+            }
+        )
+        
+        # 2. Criar histórico
+        Historico.objects.create(
+            sensor=sensor,
+            valor=row['valor'],
+            timestamp=row['timestamp']
+        )
+    
+    return Response({"mensagem": f"{len(df)} leituras importadas!"})
 
 class HistoricoViewSet(viewsets.ModelViewSet):
     queryset = Historico.objects.all()
