@@ -8,6 +8,7 @@ from .models import Ambiente, Sensor, Historico
 from .serializers import AmbienteSerializer, SensorSerializer, HistoricoSerializer, AutenticacaoSerializer
 from django.contrib.auth.models import User
 from unidecode import unidecode
+from rest_framework.parsers import MultiPartParser, FormParser
 import csv
 
 # ======================= AMBIENTES =======================
@@ -33,85 +34,70 @@ class AmbienteViewSet(viewsets.ModelViewSet):
             ])
         return response
 
-    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
-    def importar_ambientes_xlsx(self, request):
-        df = pd.read_excel(request.FILES['arquivo'], engine='openpyxl')
-        
-        for _, row in df.iterrows():
-            Ambiente.objects.create(
-                sig=row['sig'],
-                descricao=row['descricao'],
-                responsavel=row['responsavel']
-            )
-        
-        return Response({"mensagem": f"{len(df)} ambientes importados!"})
+
 
 class SensorViewSet(viewsets.ModelViewSet):
     queryset = Sensor.objects.all()
     serializer_class = SensorSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = [  
-        'id', 
-        'tipo', 
-        'status', 
-        'timestamp', 
-        'ambiente__sig',
-        'latitude',
-        'longitude'
-    ]
+    filterset_fields = {
+        'tipo': ['exact'],
+        'status': ['exact'],
+        'ambiente__sig': ['exact'],
+        'mac_address': ['exact']
+    }
 
-    @action(detail=False, methods=['get'])
-    def exportar_dados(self, request):
-        response = HttpResponse(content_type='text/csv')
-        response['Content-Disposition'] = 'attachment; filename="sensores.csv"'
+    @action(detail=False, methods=['post'], parser_classes=[MultiPartParser])
+    def importar_dados(self, request):
+        file = request.FILES['arquivo']
+        df = pd.read_excel(file)
         
-        writer = csv.writer(response)
-        writer.writerow(['Tipo', 'Valor', 'Localização', 'Status', 'Ambiente'])
-        for sensor in self.get_queryset():
-            writer.writerow([
-                sensor.get_tipo_sensor_display(),
-                sensor.valor,
-                f"{sensor.latitude}, {sensor.longitude}",
-                sensor.get_status_display(),
-                sensor.ambiente.sig
-            ])
-        return response
+        for _, row in df.iterrows():
+            sensor, _ = Sensor.objects.update_or_create(
+                mac_address=row['mac_address'],
+                defaults={
+                    'tipo': row['sensor'],
+                    'latitude': row['latitude'],
+                    'longitude': row['longitude'],
+                    'status': row['status'],
+                    'ambiente': Ambiente.objects.get(sig=row['ambiente_sig'])  # Supondo que a planilha tem essa coluna
+                }
+            )
+        return Response({"status": f"{len(df)} sensores importados"})
 
-# No SensorViewSet
-@action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
-def importar_sensores_xlsx(self, request):
-    df = pd.read_excel(request.FILES['arquivo'], engine='openpyxl')
-    
-    for _, row in df.iterrows():
-        # 1. Obter ou criar o Sensor
-        sensor, created = Sensor.objects.get_or_create(
-            mac_address=row['mac_address'],
-            defaults={
-                'tipo': row['sensor'],  # Ex: 'contador', 'luminosidade'
-                'status': row['status'],
-                'latitude': row['latitude'],
-                'longitude': row['longitude'],
-                # Ambiente (ajuste necessário - veja observação abaixo)
-                'ambiente': Ambiente.objects.get(sig='AMB_SIG_AQUI')  # Substituir por lógica real
-            }
-        )
-        
-        # 2. Criar histórico
-        Historico.objects.create(
-            sensor=sensor,
-            valor=row['valor'],
-            timestamp=row['timestamp']
-        )
-    
-    return Response({"mensagem": f"{len(df)} leituras importadas!"})
 
 class HistoricoViewSet(viewsets.ModelViewSet):
     queryset = Historico.objects.all()
     serializer_class = HistoricoSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['sensor__id', 'timestamp', 'sensor__ambiente__sig']
+    filterset_fields = {
+        'sensor__id': ['exact'],
+        'timestamp': ['gte', 'lte'],  # Filtro por intervalo de datas
+        'sensor__tipo': ['exact'],
+        'sensor__ambiente__sig': ['exact']
+    }
+
+    @action(detail=False, methods=['get'])
+    def exportar_csv(self, request):
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="historicos.csv"'
+        
+        writer = csv.writer(response)
+        writer.writerow(['Sensor', 'Tipo', 'Valor', 'Unidade', 'Data', 'Ambiente'])
+        
+        for historico in self.filter_queryset(self.get_queryset()):
+            writer.writerow([
+                historico.sensor.mac_address,
+                historico.sensor.tipo,
+                historico.valor,
+                historico.unidade_medida,
+                historico.timestamp,
+                historico.sensor.ambiente.sig
+            ])
+        
+        return response
 
 class AutenticacaoViewSet(viewsets.ViewSet):
     serializer_class = AutenticacaoSerializer  

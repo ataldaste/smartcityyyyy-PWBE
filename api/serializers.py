@@ -5,20 +5,22 @@ from django.contrib.auth.models import User
 class AmbienteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ambiente
-        fields = '__all__'
+        fields = ['id', 'sig', 'nome', 'localizacao', 'descricao', 'ni', 'responsavel']
 
 class SensorSerializer(serializers.ModelSerializer):
+    ambiente_sig = serializers.CharField(source='ambiente.sig', read_only=True)
+    
     class Meta:
         model = Sensor
-        fields = '__all__'
+        fields = ['id', 'tipo', 'mac_address', 'status', 'latitude', 'longitude', 'ambiente', 'ambiente_sig']
 
 class HistoricoSerializer(serializers.ModelSerializer):
-    sensor = SensorSerializer(read_only=True)
-    ambiente = AmbienteSerializer(read_only=True)
-
+    sensor_tipo = serializers.CharField(source='sensor.tipo', read_only=True)
+    ambiente_sig = serializers.CharField(source='sensor.ambiente.sig', read_only=True)
+    
     class Meta:
         model = Historico
-        fields = '__all__'
+        fields = ['id', 'valor', 'timestamp', 'unidade_medida', 'sensor', 'sensor_tipo', 'ambiente_sig']
 
 
 class AutenticacaoSerializer(serializers.Serializer):
